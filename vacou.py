@@ -7,12 +7,18 @@ SELF: how to?
 
 import subprocess
 import pandas as pd
+import numpy as np
 import argparse
 import os
-from sklearn.feature_selection import VarianceThreshold
+
+from sklearn.feature_selection import VarianceThreshold, SelectKBest, f_regression, mutual_info_regression
 from sklearn.preprocessing import normalize, scale
 from sklearn.decomposition import PCA
+from sklearn.model_selection import GridSearchCV
+from sklearn.pipeline import Pipeline
+from sklearn.svm import LinearSVC
 
+import matplotlib.pyplot as plt
 
 def preprocess_vc(data_fp):
     d = pd.read_csv(data_fp, sep='\t')
@@ -39,15 +45,41 @@ def normalize_pd(d, axis = 1, how='normalize'):
         return pd.DataFrame(scale(d, axis=axis),
                         columns = d.columns, index = d.index)
 
-def sel_var(d, threshold):
+def sel_var(X, threshold):
     #d = normalize_pd(d, 1)
-    sel = VarianceThreshold(threshold = threshold)
-    d_sel = sel.fit_transform(d)
-    o = pd.DataFrame(d_sel, columns = d.columns[sel.get_support()],
-                        index = d.index)
-    variances = pd.Series(sel.variances_, index = d.columns)
+    var_filter = VarianceThreshold(threshold = threshold)
+    var_filter.fit(X)
+    X_sel = var_filter.transform(X)
+    o = pd.DataFrame(X_sel, columns = X.columns[var_filter.get_support()],
+                        index = X.index)
+    variances = pd.Series(var_filter.variances_, index = X.columns)
     return o, variances
 
+
+def sel_anova(X, y, k=10):
+    '''
+    "Univariate linear regression tests.
+    Quick linear model for testing the effect of a single regressor,
+    sequentially for many regressors."
+    '''
+    anova_filter = SelectKBest(f_regression, k=k)
+    anova_filter.fit(X, y)
+    X_sel = anova_filter.transform(X)
+    o = pd.DataFrame(X_sel, columns = X.columns[anova_filter.get_support()],
+                        index = X.index)
+    return o
+
+
+def sel_mi(X, y, k=10):
+    '''
+    Mutual information based feature selection.
+    '''
+    mi_filter = SelectKBest(mutual_info_regression, k=k)
+    mi_filter.fit(X, y)
+    X_sel = mi_filter.transform(X)
+    o = pd.DataFrame(X_sel, columns = X.columns[mi_filter.get_support()],
+                        index = X.index)
+    return o
 
 
 def get_pc(d, n_comps=10):
@@ -66,8 +98,70 @@ def get_plot_comps(comps, md):
     return o
 
 
+def compare_dim_red_methods(X, y):
+    '''
+    http://scikit-learn.org/stable/auto_examples/plot_compare_reduction.html#sphx-glr-auto-examples-plot-compare-reduction-py
+    '''
+
+    pipe = Pipeline([
+        ('reduce_dim', PCA()),
+        ('classify', LinearSVC())
+    ])
+
+    N_FEATURES_OPTIONS = [2, 4, 8, 10, 100]
+    C_OPTIONS = [1, 10, 100, 1000]
+    param_grid = [
+        {
+            'reduce_dim': [PCA(iterated_power=7)],
+            'reduce_dim__n_components': N_FEATURES_OPTIONS,
+            'classify__C': C_OPTIONS
+        },
+        {
+            'reduce_dim': [SelectKBest(f_regression)],
+            'reduce_dim__k': N_FEATURES_OPTIONS,
+            'classify__C': C_OPTIONS
+        },
+        {
+            'reduce_dim': [SelectKBest(mutual_info_regression)],
+            'reduce_dim__k': N_FEATURES_OPTIONS,
+            'classify__C': C_OPTIONS
+        },
+    ]
+    grid = GridSearchCV(pipe, cv=5, n_jobs=8, param_grid=param_grid)
+
+    reducer_labels = ['PCA', 'KBest(f_reg)', 'KBest(mi_reg)']
+
+    grid.fit(X, y)
+
+    mean_scores = np.array(grid.cv_results_['mean_test_score'])
+    #std_scores = np.array(grid.cv_results_['std_test_score'])
+    # scores are in the order of param_grid iteration, which is alphabetical
+    mean_scores = mean_scores.reshape(len(C_OPTIONS), -1, len(N_FEATURES_OPTIONS))
+    # select score for best C
+    mean_scores = mean_scores.max(axis=0)
+    bar_offsets = (np.arange(len(N_FEATURES_OPTIONS)) *
+                (len(reducer_labels) + 1) + .5)
+
+    plt.figure()
+    COLORS = 'bgrcmyk'
+    for i, (label, reducer_scores) in enumerate(zip(reducer_labels, mean_scores)):
+        plt.bar(bar_offsets + i, reducer_scores, label=label, color=COLORS[i])
+
+    plt.title("Comparison of feature reduction methods")
+    plt.xlabel('Number of features')
+    plt.xticks(bar_offsets + len(reducer_labels) / 2, N_FEATURES_OPTIONS)
+    plt.ylabel('Regression accuracy')
+    plt.ylim((0, 1))
+    plt.legend(loc='upper left')
+    plt.show()
+
+
+def glms():
+    #TODO Explore glm / mixed model possibilities
+    pass
+
 if __name__ == "__main__":
-    data_fp = '/P/vasc/data_ss31.tsv'
+    data_fp = '/P/vacou/data_ss31.tsv'
 
 
 
