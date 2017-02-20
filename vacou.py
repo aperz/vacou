@@ -20,18 +20,27 @@ from sklearn.svm import LinearSVC
 
 import matplotlib.pyplot as plt
 
-def preprocess_vc(data_fp):
+def preprocess_vc(data_fp, version):
     d = pd.read_csv(data_fp, sep='\t')
+    d.Animal = [a.strip('.') for a in d.Animal]
     d.index = d.Animal
-    resp = [12 for i in range(15)]+[6 for i in range(10)]+[14 for i in range(20)]
-    d.insert(0, 'vc', resp)
-    # Unnamed cols contain NaNs
-    d.drop(['Experiment', 'Unnamed: 152', 'Unnamed: 171',
-                'NumberOfRunsUsedForCalculatingTrialStatistics']
-            , 1, inplace=True)
+    #ATT: dummy data in lieu NVC!
+    if version == 1:
+        resp = [12 for i in range(15)]+[6 for i in range(10)]+[14 for i in range(20)]
+        d.insert(0, 'dummy_NVC', resp)
 
-    md = d.ix[:, :4]
-    df = d.ix[:, 4:]
+    # Unnamed cols contain NaNs
+    d.drop(['Experiment', 'Unnamed: 151', 'Unnamed: 152', 'Unnamed: 171',
+                'NumberOfRunsUsedForCalculatingTrialStatistics']
+            , 1, inplace=True, errors='ignore')
+
+    if version == 1:
+        md = d.ix[:, :4]
+        df = d.ix[:, 4:]
+
+    if version == 2:
+        md = d.ix[:, (0,1,-1)]
+        df = d.ix[:, 2:-1]
 
     return df, md, d
 
@@ -154,6 +163,9 @@ def compare_dim_red_methods(X, y):
     plt.ylim((0, 1))
     plt.legend(loc='upper left')
     plt.show()
+
+def select_columns_matching(X, pattern):
+    return X.ix[:, X.columns.str.match(pattern)]
 
 
 def glms():
