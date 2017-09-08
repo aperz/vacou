@@ -34,6 +34,11 @@ pandas2ri.activate()
 from preprocess import *
 from toolbox import *
 
+#pd.set_option('display.height', 1000)
+pd.set_option('display.max_rows', 500)
+pd.set_option('display.max_columns', 500)
+pd.set_option('display.width', 1000)
+
 ###
 
 def simulate_mouse(d, n_trials=1, group='Y', animal_id=9.0, dist='normal', distort=None):
