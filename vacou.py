@@ -32,7 +32,9 @@ from rpy2.robjects.packages import importr
 pandas2ri.activate()
 
 from preprocess import *
-from toolbox import *
+from skrzynka.optimization import *
+from skrzynka.stats import *
+from skrzynka import *
 
 #pd.set_option('display.height', 1000)
 pd.set_option('display.max_rows', 500)
@@ -219,159 +221,12 @@ def preprocess_vc(version, data_fp=None, sep_runs_data_fp=None, use_vars_fp='use
 
         return df, md, d
 
-def sel_var(X, threshold):
-    #d = normalize_pd(d, 1)
-    var_filter = VarianceThreshold(threshold = threshold)
-    var_filter.fit(X)
-    X_sel = var_filter.transform(X)
-    o = pd.DataFrame(X_sel, columns = X.columns[var_filter.get_support()],
-                        index = X.index)
-    variances = pd.Series(var_filter.variances_, index = X.columns)
-    return o, variances
-
-
-def sel_anova(X, y, mode='classif'):
-    '''
-    "Univariate linear regression tests.
-    Quick linear model for testing the effect of a single regressor,
-    sequentially for many regressors."
-
-    mode: 'classif' or 'regression'
-    '''
-    if mode == 'classif':
-        anova_filter = SelectKBest(f_classif, k='all')
-    if mode == 'regression':
-        anova_filter = SelectKBest(f_regression, k='all')
-
-    anova_filter.fit(X, y)
-    X_sel = anova_filter.transform(X)
-    support = pd.DataFrame(X_sel, columns = X.columns[anova_filter.get_support()],
-                        index = X.index)
-    pvals = anova_filter.pvalues_
-    o = pd.concat([
-                    pd.DataFrame(support.columns, columns=['param']),
-                    pd.DataFrame(pvals, columns=['pval'])
-                ], axis=1)\
-            .sort_values('pval')
-    return o, support
-
-
-def sel_mi(X, y, k=10, mode='classif'):
-    '''
-    Mutual information based feature selection.
-    mode: 'classif' or 'regression'
-    '''
-    if mode == 'classif':
-        mi_filter = SelectKBest(mutual_info_classif, k=k)
-    if mode == 'regression':
-        mi_filter = SelectKBest(mutual_info_regression, k=k)
-
-    mi_filter.fit(X, y)
-    X_sel = mi_filter.transform(X)
-    o = pd.DataFrame(X_sel, columns = X.columns[mi_filter.get_support()],
-                        index = X.index)
-    pvals = mi_filter.pvalues_
-    return o, pvals
-
-
-def get_pc(d, **kwargs):
-    pca = PCA(**kwargs)
-    pca.fit(d.T)
-    colnames = ['PC'+str(n) for n in range(1,pca.components_.shape[0]+1)]
-    comps = pd.DataFrame(pca.components_.T, columns = colnames, index = d.index)
-    exp_var = pd.Series(pca.explained_variance_ratio_, index = colnames)
-
-    return comps, exp_var, pca
-
 
 def get_plot_comps(comps, md):
     md_, comps_ = md.align(comps, axis=0)
     o = pd.concat([md_, comps_], axis=1)
     return o
 
-
-def compare_dim_red_methods(X, y, mode='classif'):
-    '''
-    http://scikit-learn.org/stable/auto_examples/plot_compare_reduction.html#sphx-glr-auto-examples-plot-compare-reduction-py
-    '''
-
-    pipe = Pipeline([
-        ('reduce_dim', PCA()),
-        ('classify', LinearSVC())
-    ])
-
-    N_FEATURES_OPTIONS = [1, 2, 4, 8, 10, 60]
-    C_OPTIONS = [1, 10, 100, 1000]
-    if mode == 'regression':
-        param_grid = [
-            {
-                'reduce_dim': [PCA(iterated_power=7)],
-                'reduce_dim__n_components': N_FEATURES_OPTIONS,
-                'classify__C': C_OPTIONS
-            },
-            {
-                'reduce_dim': [SelectKBest(f_regression)],
-                'reduce_dim__k': N_FEATURES_OPTIONS,
-                'classify__C': C_OPTIONS
-            },
-            {
-                'reduce_dim': [SelectKBest(mutual_info_regression)],
-                'reduce_dim__k': N_FEATURES_OPTIONS,
-                'classify__C': C_OPTIONS
-            },
-        ]
-
-    if mode == 'classif':
-        param_grid = [
-            {
-                'reduce_dim': [PCA(iterated_power=7)],
-                'reduce_dim__n_components': N_FEATURES_OPTIONS,
-                'classify__C': C_OPTIONS
-            },
-            {
-                'reduce_dim': [SelectKBest(f_classif)],
-                'reduce_dim__k': N_FEATURES_OPTIONS,
-                'classify__C': C_OPTIONS
-            },
-            {
-                'reduce_dim': [SelectKBest(mutual_info_classif)],
-                'reduce_dim__k': N_FEATURES_OPTIONS,
-                'classify__C': C_OPTIONS
-            },
-        ]
-    grid = GridSearchCV(pipe, cv=5, n_jobs=8, param_grid=param_grid)
-
-    if mode == 'regression':
-        reducer_labels = ['PCA', 'KBest(f_regression)', 'KBest(mi_regression)']
-    if mode == 'classif':
-        reducer_labels = ['PCA', 'KBest(f_classif)', 'KBest(mi_classif)']
-
-    grid.fit(X, y)
-
-    mean_scores = np.array(grid.cv_results_['mean_test_score'])
-    #std_scores = np.array(grid.cv_results_['std_test_score'])
-    # scores are in the order of param_grid iteration, which is alphabetical
-    mean_scores = mean_scores.reshape(len(C_OPTIONS), -1, len(N_FEATURES_OPTIONS))
-    # select score for best C
-    mean_scores = mean_scores.max(axis=0)
-    bar_offsets = (np.arange(len(N_FEATURES_OPTIONS)) *
-                (len(reducer_labels) + 1) + .5)
-
-    plt.figure()
-    COLORS = 'bgrcmyk'
-    for i, (label, reducer_scores) in enumerate(zip(reducer_labels, mean_scores)):
-        plt.bar(bar_offsets + i, reducer_scores, label=label, color=COLORS[i])
-
-    plt.title("Comparison of feature reduction methods")
-    plt.xlabel('Number of features')
-    plt.xticks(bar_offsets + len(reducer_labels) / 2, N_FEATURES_OPTIONS)
-    if mode == 'regression':
-        plt.ylabel('Regression accuracy')
-    if mode == 'classif':
-        plt.ylabel('Classification accuracy')
-    plt.ylim((0, 1))
-    plt.legend(loc='upper left')
-    plt.show()
 
 def only_LR(d):
     return select_columns_matching(d, ["LH", 'LF', 'RH', 'RF'])
@@ -406,10 +261,16 @@ def dist_L_R_(A, metric):
 
     distances = {}
 
-    if metric == 'ma_difference':
+    if metric == 'mean_absolute_difference':
         for var in L.columns:
             distances[var] = np.mean(np.abs(
                         [i-j for i,j in zip(L[var].tolist(), R[var].tolist())]
+                        ))
+
+    elif metric == 'mean_distance_from_identity_line':
+        for var in L.columns:
+            distances[var] = np.mean(np.abs(
+                        [(i-j)/np.sqrt(2) for i,j in zip(L[var].tolist(), R[var].tolist())]
                         ))
 
     elif metric == 'covariance':
@@ -472,20 +333,52 @@ def plot_L_R(A, use_level):
     o.rename(columns={'level_1': 'parameter', 'level_2':'Animal'}, inplace=True)
     return o
 
-def plot_relationships(d, n=None, hue='Group', cut=False, **kwargs):
+def plot_relationships(d, n=None, hue='Group', line='regression', cut=False, **kwargs):
     '''
     cut : set to tuple for truncating the axes
+    :param line: Either 'x=y' or 'regression'
     '''
-    n = 3
-    LR_colnames = get_L_R_colnames(d)
+    #with sns.set_context('poster'):
+
+    LR_colnames = list(get_L_R_colnames(d))
+    if isinstance(n, int):
+        LR_colnames = LR_colnames[:n]
     d = d.reset_index()
 
     for var in LR_colnames:
         #return L[[var]], R[[var]]
-        sns.lmplot("L"+var, "R"+var, data=d, size=3, hue=hue, **kwargs)
-        if cut:
-            plt.axis([cut[0],cut[1], cut[0],cut[1]])
+        plt.figure(figsize=(20,20))
 
+        if line == 'regression':
+            p = sns.lmplot("L"+var, "R"+var, data=d, size=5, aspect=1, hue=hue,
+                    scatter=True, **kwargs)
+        elif line == "x=y":
+
+            p = sns.lmplot("L"+var, "R"+var, data=d, size=5, aspect=1, hue=hue,
+                    fit_reg=False,#sharex=True, sharey=True,
+                    scatter=True,
+                    **kwargs)
+            #plt.scatter(d["L"+var], d["R"+var], #, hue=hue,
+                    #fit_reg=False, sharex=True, sharey=True,
+                    #**kwargs)\
+                    #;
+            plt.plot([cut[0]-1,cut[1]+1], [cut[0]-1,cut[1]+1], '-', color='grey')
+
+        if not cut==None:
+            #p.FacetGrid.set(xticks=np.arange(1,4,1)
+            #p.set(ylim=(cut[0]-0.5,cut[1]+0.5), yticks=np.arange(cut[0], cut[1], 1))
+            #p.set(xlim=(cut[0]-0.5,cut[1]+0.5), xticks=np.arange(cut[0], cut[1], 1))
+            p.set(ylim=(cut[0],cut[1]), yticks=np.arange(cut[0], cut[1]+1, 1))
+            p.set(xlim=(cut[0],cut[1]), xticks=np.arange(cut[0], cut[1]+1, 1))
+            #title = var.replace('_', " ")
+            title = var
+            if len(var) > 20:
+                title = var[:20]+"\n"+var[20:]
+            title = title+"\n"
+            p.set(title=title)
+            p.set_xlabels("Left")
+            p.set_ylabels("Right")
+        plt.show()
 
 
 def glms():
@@ -493,103 +386,8 @@ def glms():
     pass
 
 
-def anovaR(data_fp, formula):
-    tmpfile='.tmpvacou'
-    #if not os.path.isfile(tmpfile):
-        #os.mknod(tmpfile)
-    #r.assign('d', data)
-    r("d <- read.csv('"+data_fp+"', sep='\\t')")
-    r('anova <- aov('+formula+', data=d)')
-    call = 'anova <- aov('+formula+', data=d)'
-    r("capture.output(summary(anova), file='"+tmpfile+"')")
-    #r("o = capture.output(summary(anova))")
-    with open(tmpfile, "r") as f:
-        o = []
-        o.append(call)
-        o.append('\n')
-        for i,l in enumerate(f.readlines()):
-            o.append(l)
-    return o#, call
-
-
-def manovaR(data_fp = 'data/PCs.tsv',
-            formula = 'cbind(PC1, PC2, PC3)~ Group', groups='all'):
-    tmpfile='.tmpvacou'
-    r("data <- read.csv('"+data_fp+"', sep='\\t')") #, check.names=FALSE)")
-
-    if groups !='all':
-        assert len(groups) == 2
-        r("data <- droplevels(data[data$Group %in% c('"+ groups[0] +"', '"+groups[1]+"'),])")
-
-    r('ma <- manova('+formula+', data=data)')
-    call = 'ma <- manova('+formula+', data=data)'
-
-    r("capture.output(summary(ma), file='"+tmpfile+"')")
-    with open(tmpfile, "r") as f:
-        o = {}
-        o['summary'] = []
-        o['summary.aov'] = []
-        o['summary'].append(call)
-        o['summary'].append('\n')
-        o['summary.aov'].append(call)
-        o['summary.aov'].append('\n')
-        for i,l in enumerate(f.readlines()):
-            o['summary'].append(l.rstrip())
-
-    r("capture.output(summary.aov(ma), file='"+tmpfile+"')")
-    with open(tmpfile, "r") as f:
-        for i,l in enumerate(f.readlines()):
-            o['summary.aov'].append(l.rstrip())
-    return o#, call
-
-
-def manova_contrastsR(data_fp = 'data/PCs.tsv',
-                    formula = 'cbind(PC1, PC2, PC3)~ Group'):
-    tmpfile='.tmpvacou'
-    r("pcs <- read.csv('"+data_fp+"', sep='\\t')")
-
-    r('ma <- manova('+formula+', data=pcs, contrasts = contrasts(pcs$Group))')
-    call = 'ma <- manova('+formula+', data=pcs)'
-
-    r("capture.output(summary(ma), file='"+tmpfile+"')")
-    with open(tmpfile, "r") as f:
-        o = {}
-        o['summary'] = []
-        o['summary.aov'] = []
-        o['summary'].append(call)
-        o['summary'].append('\n')
-        o['summary.aov'].append(call)
-        o['summary.aov'].append('\n')
-        for i,l in enumerate(f.readlines()):
-            o['summary'].append(l.rstrip())
-
-    r("capture.output(summary.aov(ma), file='"+tmpfile+"')")
-    with open(tmpfile, "r") as f:
-        for i,l in enumerate(f.readlines()):
-            o['summary.aov'].append(l.rstrip())
-    return o#, call
-
-
 def manova_py():
     #https://www.coursera.org/learn/machine-learning-data-analysis/lecture/XJJz2/running-a-k-means-cluster-analysis-in-python-pt-2
-    pass
-
-def compare_groups():
-    '''
-    https://www.coursera.org/learn/machine-learning-data-analysis/lecture/XJJz2/running-a-k-means-cluster-analysis-in-python-pt-2
-
-    Significance for group difference.
-    1)  a) PCA, take all coponents (but can assume independence - ?; what about normality?)
-        b) Factorial analysis of variance
-            >1 groups, >1 measurements; requires independent variables
-            main effects, interaction effects
-
-    2) (M)ANOVA?
-        http://www.math.wustl.edu/~victor/classes/ma322/r-eg-12.txt
-        a) test for outliers (susceptible) - at least graphically
-            R > mshapiro.test() from mvnormtest package - test for multivariate normality
-            treating nvasc coupling variable as x, too?
-    '''
     pass
 
 
